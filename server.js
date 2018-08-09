@@ -13,6 +13,7 @@ var compression = require('compression')
 var firebase = require("firebase");
 
 firebase.initializeApp(config);
+const chatTable = firebase.database().ref('chat');
 var chat = function(type, msg, msgUser, date){
     var postData = {
     type: type,
@@ -23,10 +24,10 @@ var chat = function(type, msg, msgUser, date){
   fetch(postData);
 } 
 var fetch = function(postData){ 
-  return firebase.database().ref('chat').once('value').then(function (snapshot) {
+  return chatTable.once('value').then(function (snapshot) {
     var list = snapshot.val();
     list.push(postData);
-    firebase.database().ref('chat').set(list)
+    chatTable.set(list)
   })
 }
 
@@ -38,9 +39,8 @@ var onlineUserList = [];
 var onlineUserCount = 0;
 var exitUser = {};
 app.get('/getfirebase', function (req, res) {
-  firebase.database().ref('chat').once('value').then(function (snapshot) {
-    var list = snapshot.val();
-    console.log(list);
+  chatTable.once('value').then(function (snapshot) {
+    var list = snapshot.val(); 
     res.send(list); 
   }) 
 })
@@ -78,14 +78,13 @@ io.on('connection', function (socket) {
     });
   })
   //메시지 날리는 모듈 
-  socket.on('message', function (obj) {
-    console.log(obj);
+  socket.on('message', function (obj) { 
     chat(obj.type, obj.msg, obj.msgUser, obj.date)
     this.broadcast.emit('message', obj);
     this.emit('message', obj);
   })
 });
-var port = process.env.PORT || 52273
+var port = process.env.PORT || 8018
 http.listen(port, function () {
   console.log("서버가 잘 실행되었다. ", port);
 })
