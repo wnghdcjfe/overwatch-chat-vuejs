@@ -1,0 +1,164 @@
+보안코드
+↓오류
+
+   RSA keys must be at least 512 bits long
+
+
+
+   ↓해결방법
+
+   KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+
+   generator.initialize(2048);  // key size 초기화를 넉넉하게 2048로 해준다.
+
+
+
+   참고☞ http://stackoverflow.com/questions/9094323/issues-in-rsa-encryption-in-java-class
+
+
+
+   ↓오류
+
+   RSAKey is not defined.
+
+
+
+   ↓해결방법
+
+   script 태그를 가져오는 곳의 경로와 순서를 올바르게. (마음이 급했다...;;)
+
+java 키생성
+
+KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+generator.initialize(KEY_SIZE);
+
+KeyPair keyPair = generator.genKeyPair();
+KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+
+PublicKey publicKey = keyPair.getPublic();
+PrivateKey privateKey = keyPair.getPrivate();
+
+HttpSession session = request.getSession();
+// 세션에 공개키의 문자열을 키로하여 개인키를 저장한다.
+session.setAttribute("__rsaPrivateKey__", privateKey);
+
+// 공개키를 문자열로 변환하여 JavaScript RSA 라이브러리 넘겨준다.
+RSAPublicKeySpec publicSpec = (RSAPublicKeySpec) keyFactory.getKeySpec(publicKey, RSAPublicKeySpec.class);
+
+String publicKeyModulus = publicSpec.getModulus().toString(16);
+String publicKeyExponent = publicSpec.getPublicExponent().toString(16);
+
+request.setAttribute("publicKeyModulus", publicKeyModulus);
+request.setAttribute("publicKeyExponent", publicKeyExponent);
+
+request.getRequestDispatcher("/WEB-INF/views/loginForm.jsp").forward(request, response);
+
+
+html 폼
+    <!-- script 태그에서 가져오는 자바스크립트 파일의 순서에 주의해야한다! 순서가 틀릴경우 자바스크립트 오류가 발생한다. -->
+        <script type="text/javascript" src="<%=request.getContextPath()%>/js/rsa/jsbn.js"></script>
+        <script type="text/javascript" src="<%=request.getContextPath()%>/js/rsa/rsa.js"></script>
+        <script type="text/javascript" src="<%=request.getContextPath()%>/js/rsa/prng4.js"></script>
+        <script type="text/javascript" src="<%=request.getContextPath()%>/js/rsa/rng.js"></script>
+        <script type="text/javascript" src="<%=request.getContextPath()%>/js/login.js"></script>
+    </head>
+    <body>
+        <div>
+            <label for="username">사용자ID : <input type="text" id="username" size="16"/></label>
+            <label for="password">비밀번호 : <input type="password" id="password" size="16" /></label>
+            <input type="hidden" id="rsaPublicKeyModulus" value="<%=publicKeyModulus%>" />
+            <input type="hidden" id="rsaPublicKeyExponent" value="<%=publicKeyExponent%>" />
+            <a href="<%=request.getContextPath()%>/loginFailure.jsp" onclick="validateEncryptedForm(); return false;">로그인</a>
+        </div>
+        <form id="securedLoginForm" name="securedLoginForm" action="<%=request.getContextPath()%>/login" method="post" style="display: none;">
+            <input type="hidden" name="securedUsername" id="securedUsername" value="" />
+            <input type="hidden" name="securedPassword" id="securedPassword" value="" />
+        </form>
+    </body>
+
+자바스크립트 암호화 처리
+
+function validateEncryptedForm() {
+    var username = document.getElementById("username").value;
+    var password = document.getElementById("password").value;
+    if (!username || !password) {
+        alert("ID/비밀번호를 입력해주세요.");
+        return false;
+    }
+
+    try {
+        var rsaPublicKeyModulus = document.getElementById("rsaPublicKeyModulus").value;
+        var rsaPublicKeyExponent = document.getElementById("rsaPublicKeyExponent").value;
+        submitEncryptedForm(username,password, rsaPublicKeyModulus, rsaPublicKeyExponent);
+    } catch(err) {
+        alert(err);
+    }
+    return false;
+}
+
+function submitEncryptedForm(username, password, rsaPublicKeyModulus, rsaPpublicKeyExponent) {
+    var rsa = new RSAKey();
+    rsa.setPublic(rsaPublicKeyModulus, rsaPpublicKeyExponent);
+
+    // 사용자ID와 비밀번호를 RSA로 암호화한다.
+    var securedUsername = rsa.encrypt(username);
+    var securedPassword = rsa.encrypt(password);
+
+    // POST 로그인 폼에 값을 설정하고 발행(submit) 한다.
+    var securedLoginForm = document.getElementById("securedLoginForm");
+    securedLoginForm.securedUsername.value = securedUsername;
+    securedLoginForm.securedPassword.value = securedPassword;
+    securedLoginForm.submit();
+
+Java 측 복호화하여 사용자 ID,비밀번호 확인
+/**
+     * 암호화된 비밀번호를 복호화 한다.
+     */
+    protected void processRequest(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        String securedUsername = request.getParameter("securedUsername");
+        String securedPassword = request.getParameter("securedPassword");
+
+        HttpSession session = request.getSession();
+        PrivateKey privateKey = (PrivateKey) session.getAttribute("__rsaPrivateKey__");
+        session.removeAttribute("__rsaPrivateKey__"); // 키의 재사용을 막는다. 항상 새로운 키를 받도록 강제.
+
+        if (privateKey == null) {
+            throw new RuntimeException("암호화 비밀키 정보를 찾을 수 없습니다.");
+        }
+        try {
+            String username = decryptRsa(privateKey, securedUsername);
+            String password = decryptRsa(privateKey, securedPassword);
+            request.setAttribute("username", username);
+            request.setAttribute("password", password);
+            request.getRequestDispatcher("/WEB-INF/views/login.jsp").forward(request, response);
+        } catch (Exception ex) {
+            throw new ServletException(ex.getMessage(), ex);
+        }
+    }
+
+    private String decryptRsa(PrivateKey privateKey, String securedValue) throws Exception {
+        System.out.println("will decrypt : " + securedValue);
+        Cipher cipher = Cipher.getInstance("RSA");
+        byte[] encryptedBytes = hexToByteArray(securedValue);
+        cipher.init(Cipher.DECRYPT_MODE, privateKey);
+        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
+        String decryptedValue = new String(decryptedBytes, "utf-8"); // 문자 인코딩 주의.
+        return decryptedValue;
+    }
+
+    /**
+     * 16진 문자열을 byte 배열로 변환한다.
+     */
+    public static byte[] hexToByteArray(String hex) {
+        if (hex == null || hex.length() % 2 != 0) {
+            return new byte[]{};
+        }
+
+        byte[] bytes = new byte[hex.length() / 2];
+        for (int i = 0; i < hex.length(); i += 2) {
+            byte value = (byte)Integer.parseInt(hex.substring(i, i + 2), 16);
+            bytes[(int) Math.floor(i / 2)] = value;
+        }
+        return bytes;
+    }
