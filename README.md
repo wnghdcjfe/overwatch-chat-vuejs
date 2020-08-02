@@ -2,6 +2,8 @@
 
 > A Vue.js project
 
+
+설명글입니다. https://blog.naver.com/jhc9639/220993865020
 ## Build Setup
 
 ``` bash
